@@ -16,3 +16,7 @@ GitHub Actions CI passed for initial commit f3ed3522be84d81e031b5850d4239e6e53ab
 Database integration tests run the actual migration in PGlite with auth.uid, authenticated/anon/service_role roles and representative existing tables/policies. They do not claim to replace real Supabase Auth or production PostgREST testing. No production test users or business records were created.
 
 Not verified: real authenticated browser session, live OpenAI output/streaming, PDF parsing through the live provider, live ATS board access, deployed cron, actual hosting deployment. These require the migration, user configuration and secrets. Tests do not certify legal work eligibility or factual vacancy accuracy beyond source data.
+
+## Live database activation
+
+Migration applied successfully with Supabase management tooling, remote version `20261028030610`. All 13 public/private tables have RLS enabled. Existing six tables and policies remain. Security advisor reports the intentionally inaccessible private usage table and the existing disabled leaked-password protection warning. No live AI or authenticated browser acceptance test has yet been completed.

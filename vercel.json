@@ -1,1 +1,1 @@
-{"crons":[{"path":"/api/discovery?cron=1","schedule":"0 */6 * * *"}]}
+{"crons":[{"path":"/api/discovery?cron=1","schedule":"0 12 * * *"}]}

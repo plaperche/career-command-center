@@ -33,6 +33,6 @@ For the standalone production server, copy `.next/static` to `.next/standalone/.
 
 ## Release state
 
-The code builds and tests locally. **It is not a verified production deployment.** The migration is provided but has not been applied to the live project. Live AI calls, real-account browser flows, and scheduled production scans require configuration and acceptance testing. See [deployment](docs/DEPLOYMENT.md), [audit and architecture](docs/ARCHITECTURE.md), and [verification](docs/VERIFICATION.md).
+The code builds and tests locally. **It is not a verified production deployment.** The additive migration was applied to the live project on October 27, 2026 (America/New_York), recorded remotely as 20261028030610. Live AI calls, real-account browser flows, and scheduled production scans require configuration and acceptance testing. See [deployment](docs/DEPLOYMENT.md), [audit and architecture](docs/ARCHITECTURE.md), and [verification](docs/VERIFICATION.md).
 
 No sample vacancies, candidate experience, salary, or sponsorship claims are seeded. Nothing sends recruiter messages or submits applications. Such requests produce drafts only.
