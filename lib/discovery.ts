@@ -124,8 +124,21 @@ export async function fetchBoard(
       Math.min(86400, Math.max(3600, seconds || 3600)),
     );
   }
-  const text = await response.text();
-  if (text.length > 10000000)
-    throw new SourceError("Source exceeds 10 MB limit");
+  const reader = response.body?.getReader();
+  if (!reader) throw new SourceError("Source returned no body");
+  const decoder = new TextDecoder();
+  let text = "",
+    bytes = 0;
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    bytes += value.byteLength;
+    if (bytes > 10000000) {
+      await reader.cancel();
+      throw new SourceError("Source exceeds 10 MB limit");
+    }
+    text += decoder.decode(value, { stream: true });
+  }
+  text += decoder.decode();
   return normalize(provider, JSON.parse(text));
 }

@@ -15,7 +15,7 @@ Security advisor reported existing leaked-password protection disabled. This mai
 ## Implementation plan and boundaries
 
 1. Audit and preserve baseline (completed).
-2. Deliver vertical slice: verified session → read existing opportunities → conversational planning → durable proposed action → explicit approval → transactional write (implemented and locally tested; live acceptance pending credentials/migration).
+2. Deliver vertical slice: verified session → read existing opportunities → conversational planning → durable proposed record change → explicit approval → transactional write (implemented and locally tested; live acceptance pending credentials/migration).
 3. Extend the same shell with CRUD, CRM, Kanban, planner, analytics, PDF intelligence and matching (implemented).
 4. Introduce opt-in discovery with ATS adapters and a scheduler-only worker (implemented; activation pending server secrets and chosen authorized sources).
 5. Review migration, configure deployment, run real-account end-to-end acceptance and launch (pending).
@@ -28,7 +28,7 @@ Copilot → Agents SDK → validated read/proposal tools → immutable proposal 
 
 The two private SECURITY DEFINER functions (called through public SECURITY INVOKER wrappers) exist only for narrowly scoped, authenticated operations: increment a private usage counter and atomically decide an owned proposal. Both use an empty search_path, fully qualified names, an auth.uid check, and revoked PUBLIC/anon execution. Other user data reads/writes use SECURITY INVOKER/RLS. Scheduler RPCs are revoked from authenticated and anon and granted only to service_role. Its secret key is isolated to the cron route.
 
-Conversations/messages and proposals have owner RLS. Message insertion additionally checks conversation ownership. Proposal updates are not exposed through table policies. No raw SQL tool or arbitrary URL-fetching tool is given to the agent. Record mutation schemas reject extra keys and ownership fields; linked records are checked under the caller's RLS. Existing foreign keys are not composite ownership constraints; legacy/direct clients can still attempt cross-owner relationships, so preserve and separately review the legacy client if it remains publicly maintained.
+Conversations/messages and proposals have owner RLS. Message insertion additionally checks conversation ownership. Proposal updates are not exposed through table policies. Generic record proposals validate table and field allowlists both in the server and again in the database, validate linked ownership, and require an expected update timestamp for edits. SQL identifiers come only from fixed allowlists and values are bound parameters. No raw SQL tool or arbitrary URL-fetching tool is given to the agent. Record mutation schemas reject extra keys and ownership fields; linked records are checked under the caller's RLS. Existing foreign keys are not composite ownership constraints; legacy/direct clients can still attempt cross-owner relationships, so preserve and separately review the legacy client if it remains publicly maintained.
 
 ## Runtime and limits
 

@@ -154,9 +154,33 @@ function Empty({
   );
 }
 export default function Dashboard() {
-  const [user, setUser] = useState<User | null>(null),
-    [ready, setReady] = useState(false),
-    [view, setView] = useState("overview"),
+  const [user, setUser] = useState<User | null>(null);
+  const [ready, setReady] = useState(false);
+  useEffect(() => {
+    let alive = true,
+      authEventReceived = false;
+    const { data: subscription } = db.auth.onAuthStateChange((_, session) => {
+      authEventReceived = true;
+      if (alive) {
+        setUser(session?.user || null);
+        setReady(true);
+      }
+    });
+    void db.auth.getSession().then(({ data }) => {
+      if (alive && !authEventReceived) {
+        setUser(data.session?.user || null);
+        setReady(true);
+      }
+    });
+    return () => {
+      alive = false;
+      subscription.subscription.unsubscribe();
+    };
+  }, []);
+  return <Workspace key={user?.id || "signed-out"} user={user} ready={ready} />;
+}
+function Workspace({ user, ready }: { user: User | null; ready: boolean }) {
+  const [view, setView] = useState("overview"),
     [data, setData] = useState<Data>({}),
     [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
@@ -203,27 +227,6 @@ export default function Dashboard() {
       localStorage.setItem("ccc-weights-" + user.id, JSON.stringify(next));
   }
 
-  useEffect(() => {
-    db.auth.getSession().then(({ data }) => {
-      setUser(data.session?.user || null);
-      setReady(true);
-    });
-    const { data: s } = db.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user || null);
-      if (!session) {
-        setData({});
-        setChat([]);
-        setProposals([]);
-        setConversations([]);
-        setConversationId(undefined);
-        setReport("");
-        setSources([]);
-        setJobs([]);
-        setCustomWeights(weights);
-      }
-    });
-    return () => s.subscription.unsubscribe();
-  }, []);
   async function load() {
     setLoading(true);
     try {
@@ -1241,7 +1244,9 @@ export default function Dashboard() {
                         <p>
                           {p.kind === "create_action"
                             ? "Create action"
-                            : "Update opportunity"}
+                            : p.kind === "mutate_record"
+                              ? "Record change"
+                              : "Update opportunity"}
                           : {p.payload.title}
                         </p>
                         <pre>{JSON.stringify(p.payload, null, 2)}</pre>
@@ -1437,6 +1442,25 @@ export default function Dashboard() {
                     {sources.map((s) => (
                       <div className="source-row" key={s.id}>
                         <strong>{s.board}</strong>
+                        <button
+                          onClick={async () => {
+                            try {
+                              await api("/api/discovery", {
+                                method: "PATCH",
+                                body: JSON.stringify({
+                                  id: s.id,
+                                  enabled: !s.enabled,
+                                  confirmed: true,
+                                }),
+                              });
+                              await loadDiscovery();
+                            } catch (e) {
+                              setError((e as Error).message);
+                            }
+                          }}
+                        >
+                          {s.enabled ? "Pause monitoring" : "Resume monitoring"}
+                        </button>
                         <span>
                           {s.provider} · every {s.frequency_hours}h
                         </span>

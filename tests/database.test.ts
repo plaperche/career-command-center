@@ -12,8 +12,10 @@ async function asUser(id: string) {
 beforeAll(async () => {
   db = new PGlite();
   await db.exec(`create role anon;create role authenticated;create role service_role bypassrls;create schema auth;create table auth.users(id uuid primary key);insert into auth.users values('${owner}'),('${other}');create function auth.uid() returns uuid language sql stable as $$select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid$$;grant usage on schema auth to authenticated,service_role;grant execute on function auth.uid() to authenticated,service_role;
- create table public.actions(id uuid primary key default gen_random_uuid(),user_id uuid not null references auth.users,title text not null,notes text,due_on date,kind text,status text,priority text);
+ create table public.companies(id uuid primary key default gen_random_uuid(),user_id uuid not null references auth.users,name text not null,notes text,updated_at timestamptz not null default now());
+ create table public.actions(id uuid primary key default gen_random_uuid(),user_id uuid not null references auth.users,title text not null,notes text,due_on date,kind text,status text,priority text,updated_at timestamptz not null default now());
  create table public.opportunities(id uuid primary key default gen_random_uuid(),user_id uuid not null references auth.users,title text not null,status text,updated_at timestamptz not null default now());
+ alter table public.companies enable row level security;create policy own on public.companies to authenticated using(auth.uid()=user_id) with check(auth.uid()=user_id);grant select,insert,update on public.companies to authenticated;
  alter table public.actions enable row level security;alter table public.opportunities enable row level security;
  create policy own on public.actions to authenticated using(auth.uid()=user_id) with check(auth.uid()=user_id);
  create policy own on public.opportunities to authenticated using(auth.uid()=user_id) with check(auth.uid()=user_id);
@@ -151,4 +153,84 @@ it("commits scans atomically, deduplicates and records closures", async () => {
       )
     ).rows[0].closed_at,
   ).not.toBeNull();
+});
+
+it("approves a generic company create and an optimistic update", async () => {
+  await asUser(owner);
+  const create = await db.query<{ id: string }>(
+    "insert into cc_proposals(kind,payload) values($1,$2) returning id",
+    [
+      "mutate_record",
+      JSON.stringify({
+        table: "companies",
+        id: null,
+        values: { name: "Test company" },
+      }),
+    ],
+  );
+  const created = await db.query<{ cc_decide_proposal: string }>(
+    "select cc_decide_proposal($1,true)",
+    [create.rows[0].id],
+  );
+  const row = (
+    await db.query<{ id: string; updated_at: string }>(
+      "select id,updated_at from companies where id=$1",
+      [created.rows[0].cc_decide_proposal],
+    )
+  ).rows[0];
+  const update = await db.query<{ id: string }>(
+    "insert into cc_proposals(kind,payload) values($1,$2) returning id",
+    [
+      "mutate_record",
+      JSON.stringify({
+        table: "companies",
+        id: row.id,
+        expected_updated_at: row.updated_at,
+        values: { notes: "Reviewed" },
+      }),
+    ],
+  );
+  await db.query("select cc_decide_proposal($1,true)", [update.rows[0].id]);
+  expect(
+    (
+      await db.query<{ notes: string }>(
+        "select notes from companies where id=$1",
+        [row.id],
+      )
+    ).rows[0].notes,
+  ).toBe("Reviewed");
+});
+it("generic approval rejects field injection even if a client bypasses server validation", async () => {
+  await asUser(owner);
+  const p = await db.query<{ id: string }>(
+    "insert into cc_proposals(kind,payload) values($1,$2) returning id",
+    [
+      "mutate_record",
+      JSON.stringify({
+        table: "companies",
+        id: null,
+        values: { name: "Invalid", user_id: other },
+      }),
+    ],
+  );
+  await expect(
+    db.query("select cc_decide_proposal($1,true)", [p.rows[0].id]),
+  ).rejects.toThrow();
+});
+it("generic approval rejects unsupported tables", async () => {
+  await asUser(owner);
+  const p = await db.query<{ id: string }>(
+    "insert into cc_proposals(kind,payload) values($1,$2) returning id",
+    [
+      "mutate_record",
+      JSON.stringify({
+        table: "auth.users",
+        id: null,
+        values: { name: "Invalid" },
+      }),
+    ],
+  );
+  await expect(
+    db.query("select cc_decide_proposal($1,true)", [p.rows[0].id]),
+  ).rejects.toThrow();
 });

@@ -17,7 +17,7 @@ create table public.cc_messages (
 );
 create table public.cc_proposals (
  id uuid primary key default gen_random_uuid(),user_id uuid not null default auth.uid() references auth.users(id),
- kind text not null check(kind in ('create_action','update_opportunity')),payload jsonb not null,
+ kind text not null check(kind in ('create_action','update_opportunity','mutate_record')),payload jsonb not null,
  status text not null default 'pending' check(status in ('pending','approved','rejected')),
  created_at timestamptz not null default now(), expires_at timestamptz not null default now()+interval '24 hours', executed_id uuid
 );
@@ -71,12 +71,51 @@ revoke all on function ccc_private.cc_consume_ai() from public,anon;
 grant execute on function ccc_private.cc_consume_ai() to authenticated;
 -- Immutable proposal + row lock + business write in one transaction prevents edits and replay.
 create function ccc_private.cc_decide_proposal(proposal_id uuid,approve boolean) returns uuid language plpgsql security definer set search_path='' as $$
-declare p public.cc_proposals; result uuid; begin
+declare p public.cc_proposals; result uuid; target text; allowed text[]; vals jsonb; key text; value jsonb; cols text; projections text; assignments text; parent text; owned boolean; required_field text; begin
  if auth.uid() is null then raise exception 'Authentication required';end if;
  select * into p from public.cc_proposals where id=proposal_id and user_id=auth.uid() for update;
  if not found or p.status<>'pending' or p.expires_at<now() then raise exception 'Proposal unavailable';end if;
  if not approve then update public.cc_proposals set status='rejected' where id=p.id; return null;end if;
- if p.kind='create_action' then
+ if p.kind='mutate_record' then
+ target=p.payload->>'table'; vals=p.payload->'values';
+ case target
+ when 'companies' then allowed=array['name','website','career_url','sector','location','priority','notes','fit_score','salary_score','growth_score','location_score','interest_score'];required_field='name';
+ when 'opportunities' then allowed=array['title','company_id','location','job_url','salary_min','salary_max','status','deadline','notes','fit_score','salary_score','growth_score','location_score','interest_score'];required_field='title';
+ when 'applications' then allowed=array['role_title','company_id','opportunity_id','status','applied_on','next_followup','notes'];required_field='role_title';
+ when 'contacts' then allowed=array['full_name','company_id','job_title','email','linkedin_url','status','next_followup','notes'];required_field='full_name';
+ when 'actions' then allowed=array['title','company_id','kind','status','priority','due_on','notes'];required_field='title';
+ when 'interactions' then allowed=array['summary','company_id','contact_id','channel','next_step'];required_field='summary';
+ else raise exception 'Unsupported table';end case;
+ if vals is null or jsonb_typeof(vals)<>'object' or vals='{}'::jsonb then raise exception 'Invalid fields';end if;
+ if (p.payload->>'id' is null or vals ? required_field) and (vals->>required_field is null or length(trim(vals->>required_field)) not between 1 and 300) then raise exception 'Required title missing or too long';end if;
+ for key,value in select * from jsonb_each(vals) loop
+  if not key=any(allowed) then raise exception 'Unsupported field';end if;
+  if jsonb_typeof(value) not in ('string','number','null') or length(value::text)>10000 then raise exception 'Invalid value';end if;
+  if right(key,6)='_score' and value<>'null'::jsonb and (jsonb_typeof(value)<>'number' or (value::text)::numeric not between 1 and 5 or mod((value::text)::numeric,1)<>0) then raise exception 'Invalid score';end if;
+  if key in ('salary_min','salary_max') and value<>'null'::jsonb and (jsonb_typeof(value)<>'number' or (value::text)::numeric<0) then raise exception 'Invalid salary';end if;
+  if key in ('website','career_url','job_url','linkedin_url') and value<>'null'::jsonb and vals->>key !~ '^https?://' then raise exception 'Invalid URL';end if;
+  parent=case key when 'company_id' then 'companies' when 'opportunity_id' then 'opportunities' when 'contact_id' then 'contacts' else null end;
+  if parent is not null and value<>'null'::jsonb then
+   execute format('select exists(select 1 from public.%I where id=$1 and user_id=auth.uid())',parent) into owned using (vals->>key)::uuid;
+   if not owned then raise exception 'Linked record unavailable';end if;
+  end if;
+ end loop;
+ if vals ? 'status' then
+  if target='opportunities' and (vals->>'status' is null or vals->>'status' not in ('Discovered','Shortlisted','Closed')) then raise exception 'Invalid status';end if;
+  if target='applications' and (vals->>'status' is null or vals->>'status' not in ('Planning','Preparing','Applied','Screening','Interview','Offer','Rejected','Withdrawn')) then raise exception 'Invalid status';end if;
+  if target='actions' and (vals->>'status' is null or vals->>'status' not in ('Todo','In progress','Done')) then raise exception 'Invalid status';end if;
+ end if;
+ if (vals->>'salary_min')::numeric>(vals->>'salary_max')::numeric then raise exception 'Invalid salary range';end if;
+ select string_agg(format('%I',k),',' order by k),string_agg(format('v.%I',k),',' order by k),string_agg(format('%1$I=v.%1$I',k),',' order by k)
+ into cols,projections,assignments from jsonb_object_keys(vals) k;
+ if p.payload->>'id' is null then
+  execute format('insert into public.%I(user_id,%s) select auth.uid(),%s from jsonb_populate_record(null::public.%I,$1) v returning id',target,cols,projections,target) into result using vals;
+ else
+  execute format('update public.%I t set %s,updated_at=now() from jsonb_populate_record(null::public.%I,$1) v where t.id=$2 and t.user_id=auth.uid() and t.updated_at=$3 returning t.id',target,assignments,target)
+  into result using vals,(p.payload->>'id')::uuid,(p.payload->>'expected_updated_at')::timestamptz;
+  if result is null then raise exception 'Record changed; request a fresh proposal';end if;
+ end if;
+ elsif p.kind='create_action' then
  if length(trim(p.payload->>'title')) not between 1 and 300 then raise exception 'Invalid title';end if;
  insert into public.actions(user_id,title,notes,due_on,kind,status,priority)
  values(auth.uid(),p.payload->>'title',left(p.payload->>'notes',8000),(p.payload->>'due_on')::date,'Research','Todo','Medium') returning id into result;

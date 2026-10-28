@@ -30,6 +30,17 @@ export class HttpError extends Error {
   }
 }
 export function failure(e: unknown) {
+  if (
+    e &&
+    typeof e === "object" &&
+    "code" in e &&
+    ["42P01", "PGRST202", "PGRST204"].includes(String(e.code))
+  ) {
+    e = new HttpError(
+      503,
+      "The database upgrade is not installed yet. Apply the reviewed Career Command Center migration before using this feature.",
+    );
+  }
   const status = e instanceof HttpError ? e.status : 400;
   console.error(
     JSON.stringify({

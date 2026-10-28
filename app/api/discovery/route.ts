@@ -1,3 +1,4 @@
+import { z } from "zod";
 import { createClient } from "@supabase/supabase-js";
 import { timingSafeEqual } from "node:crypto";
 import { authenticate, body, failure, HttpError } from "@/lib/auth";
@@ -83,4 +84,28 @@ async function scan(req: Request) {
     }
   }
   return Response.json({ results });
+}
+
+export async function PATCH(req: Request) {
+  try {
+    const { db } = await authenticate(req);
+    const input = z
+      .object({
+        id: z.string().uuid(),
+        enabled: z.boolean(),
+        confirmed: z.literal(true),
+      })
+      .strict()
+      .parse(await body(req));
+    const { data, error } = await db
+      .from("cc_sources")
+      .update({ enabled: input.enabled })
+      .eq("id", input.id)
+      .select()
+      .single();
+    if (error) throw error;
+    return Response.json(data);
+  } catch (e) {
+    return failure(e);
+  }
 }
